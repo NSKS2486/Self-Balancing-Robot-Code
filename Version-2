@@ -1,0 +1,273 @@
+fruit = "apple"
+import math
+from math import pi
+
+# Function dtr converts angle theta to radians, returns value as newtheta. Used because
+# python uses radians as its natural unit, but the program works in degrees
+
+def dtr(theta):					
+	newtheta = theta * 3.14 / 180
+	return newtheta
+
+# Runs setup code taken from IMU example code, library. Intializes IMU. 
+
+def bno_setup():
+	# Enable verbose debug logging if -v is passed as a parameter.
+	if len(sys.argv) == 2 and sys.argv[1].lower() == '-v':
+    		logging.basicConfig(level=logging.DEBUG)
+
+	# Initialize the BNO055 and stop if something went wrong.
+	if not bno.begin():
+    		raise RuntimeError('Failed to initialize BNO055! Is the sensor connected?')
+
+	# Print system status and self test result.
+	status, self_test, error = bno.get_system_status()
+	print('System status: {0}'.format(status))
+	print('Self test result (0x0F is normal): 0x{0:02X}'.format(self_test))
+	# Print out an error if system status is in error mode.
+	if status == 0x01:
+    		print('System error: {0}'.format(error))
+    		print('See datasheet section 4.3.59 for the meaning.')
+
+	# Print BNO055 software revision and other diagnostic data.
+	sw, bl, accel, mag, gyro = bno.get_revision()
+	print('Software version:   {0}'.format(sw))
+	print('Bootloader version: {0}'.format(bl))
+	print('Accelerometer ID:   0x{0:02X}'.format(accel))
+	print('Magnetometer ID:    0x{0:02X}'.format(mag))
+	print('Gyroscope ID:       0x{0:02X}\n'.format(gyro))
+
+	print('Reading BNO055 data, press Ctrl-C to quit...') 
+
+# The functions to turn motors rc.ForwardM(motornumber) and
+# rc.BackwardM(motornumber) only take positive values for motor speed as
+# parameters, while the PID function outputs postive and negative values, where
+# sign corresponds to direction. Function fb takes u, the speed value outputed
+# by the PID function, and splits of the sign, assigning the information to
+# variable FB, where a positive sign correponds to "F" for forward, and a negative
+# sign corresponds to "B" for backwards
+
+def fb(FB, u):    
+	if u > 0:
+		FB = "F"   #forward
+	elif u < 0:
+		FB = "B"   #back
+	else:
+            fruit = "cranberry" 
+	return FB
+
+# Function turnmotors takes variable FB, which determines motor direction, and u
+# which determines motor speed. It then passes these values to the functions for
+# turning motors from the Roboclaw Motor Controller Library
+ 
+def turnmotors(FB, u):      
+	if FB == "F":
+        	rc.ForwardM1(rc_address, u)
+        	rc.BackwardM2(rc_address, u)   # This is because wiring on one motor is reversed
+    	elif FB == "B":
+        	rc.BackwardM1(rc_address, u)
+        	rc.ForwardM2(rc_address, u)    # This is because wiring on one motor is reversed
+    	else:
+        	rc.BackwardM1(rc_address, 0)   # i.e., stop motors
+        	rc.BackardM2(rc_address, 0)
+
+
+# Continually checks whether each aspect of the IMU is calibrated. 0 means that
+# the aspect of the IMU is totally uncalibrated, 3 means that the it is
+# calibrated. When all values are equal to 3, the loop ends as the IMU is calibrated. 
+# Takes variable Cal as parameter. Cal is a flag, initially set to false, until Calcheck 
+# determines that the IMU is calibrated and breaks out of the loop. However, Cal may be
+# set to true in order to skip calibration. 
+
+def Calcheck(Cal):
+
+	while Cal == False:
+   		heading, roll, pitch = bno.read_euler()
+   		h = int(round(heading, -1))
+   		r = int(round(roll, -1))
+   		p = int(round(pitch, -1))
+    		sys, gyro, accel, mag = bno.get_calibration_status()
+    		print("gyro", gyro, "accel", accel, h,r,p)
+
+   		if gyro == 3 and accel == 3:
+			print "Sensors Calibrated!"
+			Cal = True
+   		else:
+			Cal = False
+
+
+# this function checks the current time, and subtracts an arbitrary value t0
+# from the current time. Python function time.time() measures time elapsed since
+# several decades ago. Subtracting t0 allows us to calculate time since the
+# beggining of the programs main loop.
+
+def WTIIRNDC():				# WhatTimeIsItRightNow?.com
+	t = time.time()	
+	return t
+
+
+
+try:	#Main Program Starts here 
+
+	from Adafruit_BNO055 import BNO055
+	from roboclaw import Roboclaw
+
+	import time
+	import logging
+	import sys
+
+	rc = Roboclaw("/dev/ttyS0", 19200)      # opens channel to motor controller
+	rc.Open()
+	rc_address = 0x80			# sets Roboclaw address for packet serial mode
+
+	bno = BNO055.BNO055(rst=18)             # sets up BNO055 IMU 
+	bno_setup()         
+	OPERATION_MODE_IMUPLUS = 0X08		# This mode uses accelermoter and gyroscope but not magnetometer  	
+	bno.set_mode(OPERATION_MODE_IMUPLUS)	# returns relative, not absolute values
+	
+
+	Cal = True	# flag for calibration
+	Calcheck(Cal)	# does calibration check here
+
+
+#	nobodycares = "nada"
+	Kp, Ki,  Kd = input("P, I, D coefficients") 
+
+#	Kp = 0.4
+#	Ki = 0.05
+#	Kd = 1
+
+#	nobodycares = input("go")
+
+#	Kp = 0.75
+#	Ki = 0.0015
+#	Kd = 65
+
+#	Kp = Kp / 10
+#	Kd = Kd * 10
+ 	
+
+	########################### variables defined below ######################################
+        sleep_interval = 0.005	# sleeps this long for each cycle of the main loop
+
+	pitch = 0   	# amount that the robot is off from a 90 degree angle (straight up)          
+	
+	integral  = 0	# integral of error over entire runtime
+	lastpitch = 0	# error from last iteration of loop; each cycle, error becomes lasterror
+	lasttime = 0	# time elapsed for last iteration of loop; each cycle
+
+	P = 0		# Placeholder value for proportional component of PID algorithm	
+	I = 0 		# Placeholder value for integral comoponent of PID algorithm
+	D = 0		# Placeholder value for Derivative component of PID algorithm
+
+	lastlastU = 0
+	lastU = 0
+	u = 0       	# value for motor speed calculated by PID algorithm
+	FB = "B"	# placeholder value for variable FB, which determines which direction to turn motors
+	
+	
+	CGheight = 200
+
+	lasttime = WTIIRNDC()	# initial time
+
+	noInt = 0
+	
+	t0 = WTIIRNDC()
+	starttime = WTIIRNDC()
+	count = 0
+	reporttime = 0
+	interval = 5
+	maxval = 0
+	minval = 10
+	totaltime = 0
+	starttime = t0
+	Time_elapsed = 0.02
+	average = 0.02
+	MWS 	= 1800	
+	integral = 0
+
+	# max_rpm * (1/60) * (wheel_circumference)
+
+	pstatement = 0 
+	while True:
+		CurrentTime = WTIIRNDC()
+		Time_elapsed = CurrentTime - lasttime
+		
+		pstatement =  pstatement + 1
+
+		TE = Time_elapsed
+
+		heading, roll, pitch = bno.read_euler()
+		pitch = roll + 2
+		pitchrate = (pitch-lastpitch)/TE
+
+
+		#############################################################################################
+		############################# Calculate P, I and D values ###################################
+		#############################################################################################
+
+		dAngle     = pitchrate  * TE
+	
+		integral = integral + pitch
+
+		
+		tAngle = (pitch * Kp) +  (dAngle * Kd) + (integral * Ki)
+
+		print integral	
+		rtAngle = dtr(tAngle)
+  		tDistance = CGheight * math.sin(rtAngle)		
+		raw_speed = tDistance / TE 
+		u = (raw_speed * 127)/(MWS)
+		u = int(u)
+
+		#############################################################################################
+		############################# Calculate P, I and D values ###################################
+		#############################################################################################
+		lastlastU = lastU
+		lastU = u
+		
+
+		if u > 127:			# caps u value at + or - 127, the maximum motor speed
+			u = 127
+		elif u < -127:
+			u = -127
+		else:
+                    fruit = "canteloupe"
+
+
+		FB = fb(FB, u)			# splits off + or - sign in order to determine motor direction
+		u = abs(u)
+
+
+   		turnmotors (FB, u)
+
+		totaltime = totaltime + Time_elapsed
+		count = count + 1
+
+		if Time_elapsed > maxval:
+			maxval = Time_elapsed
+		if Time_elapsed < minval:
+			minval = Time_elapsed
+
+		if round((CurrentTime - starttime), 0) == interval:
+			average = totaltime/count
+			print "min", minval, "     max", maxval, "    average", average
+			count = 0
+			maxval = 0
+			minval = 10
+			totaltime = 0
+			starttime = WTIIRNDC()
+
+
+		lasttime = CurrentTime
+		lastpitch = pitch
+
+
+except:                     # runs if there is error or keyboard interrupt
+
+	turnmotors(FB, 0)   # makes sure motors stop turning
+	print(fruit)	
+	T = CurrentTime - t0
+	T = round(T, 1)
+	print "Ran for", T, "seconds"   # prints total runtime
+
